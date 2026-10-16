@@ -1,11 +1,13 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+
+import 'models/football_match.dart';
+import 'models/training_session.dart';
+import 'services/api_service.dart';
+import 'services/football_api_service.dart';
 
 // ============================================================
 // Football Training Session - CC 302 Final Project
-// Single-file version: everything lives in main.dart
+// Main application and UI
 // ============================================================
 
 // ---------- theme.dart ----------
@@ -47,87 +49,6 @@ ThemeData buildAppTheme() {
       contentTextStyle: TextStyle(color: Colors.white),
     ),
   );
-}
-
-// ---------- models/training_session.dart ----------
-class TrainingSession {
-  final int id;
-  final String title;
-  final String type;
-  final int durationMin;
-  final String location;
-  bool completed;
-
-  TrainingSession({
-    required this.id,
-    required this.title,
-    required this.type,
-    required this.durationMin,
-    required this.location,
-    required this.completed,
-  });
-
-  static const _drills = <(String, String, int)>[
-    ('Passing & Receiving', 'Technical', 45),
-    ('Dribbling Circuit', 'Technical', 40),
-    ('Shooting Accuracy', 'Attacking', 50),
-    ('Small-Sided Games', 'Tactical', 60),
-    ('Defensive Positioning', 'Tactical', 55),
-    ('Speed & Agility', 'Fitness', 35),
-    ('Endurance Run', 'Fitness', 45),
-    ('Set Pieces', 'Tactical', 40),
-    ('Goalkeeper Reflexes', 'Technical', 30),
-    ('Mindset & Recovery', 'Mental', 25),
-  ];
-  static const _places = [
-    'Main Pitch',
-    'Training Ground B',
-    'Indoor Court',
-    'Track',
-  ];
-
-  /// Maps a JSONPlaceholder "todo" into a training session.
-  /// id/userId/completed come from the API; drill details are derived from the id.
-  factory TrainingSession.fromJson(Map<String, dynamic> json) {
-    final id = json['id'] as int;
-    final drill = _drills[(id - 1) % _drills.length];
-    return TrainingSession(
-      id: id,
-      title: drill.$1,
-      type: drill.$2,
-      durationMin: drill.$3,
-      location: _places[(json['userId'] as int) % _places.length],
-      completed: json['completed'] as bool,
-    );
-  }
-}
-
-// ---------- services/api_service.dart ----------
-
-class ApiService {
-  static const _baseUrl = 'https://jsonplaceholder.typicode.com';
-
-  Future<List<TrainingSession>> fetchSessions() async {
-    final response = await http
-        .get(Uri.parse('$_baseUrl/todos?_limit=12'))
-        .timeout(const Duration(seconds: 10));
-    if (response.statusCode != 200) {
-      throw Exception('Server error: ${response.statusCode}');
-    }
-    final data = jsonDecode(response.body) as List<dynamic>;
-    return data
-        .map((e) => TrainingSession.fromJson(e as Map<String, dynamic>))
-        .toList();
-  }
-
-  Future<void> deleteSession(int id) async {
-    final response = await http
-        .delete(Uri.parse('$_baseUrl/todos/$id'))
-        .timeout(const Duration(seconds: 10));
-    if (response.statusCode != 200) {
-      throw Exception('Delete failed: ${response.statusCode}');
-    }
-  }
 }
 
 // ---------- controllers/session_controller.dart ----------
@@ -664,6 +585,7 @@ class HomeScreen extends StatelessWidget {
             ),
             const SectionHeader('Overview'),
             ..._buildOverview(),
+            const _FootballScoresSection(),
           ],
         );
       },
@@ -732,6 +654,166 @@ class HomeScreen extends StatelessWidget {
             child: SessionCard(session: s),
           ),
     ];
+  }
+}
+
+class _FootballScoresSection extends StatefulWidget {
+  const _FootballScoresSection();
+
+  @override
+  State<_FootballScoresSection> createState() =>
+      _FootballScoresSectionState();
+}
+
+class _FootballScoresSectionState extends State<_FootballScoresSection> {
+  final _api = FootballApiService();
+  late Future<List<FootballMatch>> _matches;
+
+  @override
+  void initState() {
+    super.initState();
+    _matches = _api.fetchMatches();
+  }
+
+  void _refresh() {
+    setState(() => _matches = _api.fetchMatches());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Expanded(child: SectionHeader('Football fixtures')),
+            IconButton(
+              tooltip: 'Refresh football fixtures',
+              onPressed: _refresh,
+              icon: const Icon(Icons.refresh_rounded),
+            ),
+          ],
+        ),
+        const Padding(
+          padding: EdgeInsets.only(bottom: 10),
+          child: Text(
+            'Premier League · ESPN',
+            style: TextStyle(fontSize: 12, color: AppColors.muted),
+          ),
+        ),
+        FutureBuilder<List<FootballMatch>>(
+          future: _matches,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting &&
+                !snapshot.hasData) {
+              return const Padding(
+                padding: EdgeInsets.all(20),
+                child: Center(child: CircularProgressIndicator()),
+              );
+            }
+            if (snapshot.hasError) {
+              return Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Could not load football fixtures.',
+                      style: TextStyle(color: AppColors.muted),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: _refresh,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Retry'),
+                  ),
+                ],
+              );
+            }
+
+            final matches = snapshot.data ?? const <FootballMatch>[];
+            if (matches.isEmpty) {
+              return const Padding(
+                padding: EdgeInsets.only(bottom: 16),
+                child: Text(
+                  'No fixtures available right now.',
+                  style: TextStyle(color: AppColors.muted),
+                ),
+              );
+            }
+
+            return Column(
+              children: [
+                for (final match in matches.take(5))
+                  _FootballMatchTile(match: match),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _FootballMatchTile extends StatelessWidget {
+  final FootballMatch match;
+
+  const _FootballMatchTile({required this.match});
+
+  @override
+  Widget build(BuildContext context) {
+    final time = MaterialLocalizations.of(context).formatTimeOfDay(
+      TimeOfDay.fromDateTime(match.startTime.toLocal()),
+    );
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(match.homeTeam, style: const TextStyle(fontSize: 14)),
+                const SizedBox(height: 4),
+                Text(
+                  match.awayTeam,
+                  style: const TextStyle(fontSize: 14, color: AppColors.muted),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                match.homeScore == null || match.awayScore == null
+                    ? time
+                    : '${match.homeScore} - ${match.awayScore}',
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                match.isLive ? 'LIVE' : match.status,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: match.isLive ? AppColors.accent : AppColors.muted,
+                  fontWeight: match.isLive ? FontWeight.w700 : FontWeight.w400,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -1263,7 +1345,18 @@ class _MainShellState extends State<MainShell> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(_titles[_navIndex])),
+      appBar: AppBar(
+        title: Text(_titles[_navIndex]),
+        actions: _navIndex == 1
+            ? [
+                IconButton(
+                  tooltip: 'Refresh sessions',
+                  onPressed: _controller.isLoading ? null : _controller.load,
+                  icon: const Icon(Icons.refresh_rounded),
+                ),
+              ]
+            : null,
+      ),
       body: IndexedStack(
         index: _navIndex,
         children: [
